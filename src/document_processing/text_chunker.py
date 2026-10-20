@@ -2,12 +2,12 @@
 import re
 
 
-def chunk_text(
-    text: str,
+def chunk_pages(
+    pages: list[dict],
     chunk_size: int = 500,
     overlap: int = 50,
-) -> list[str]:
-    """Split extracted document text into overlapping chunks."""
+) -> list[dict]:
+    """Split PDF pages into chunks while preserving source metadata."""
 
     if chunk_size <= 0:
         raise ValueError("chunk_size must be greater than 0")
@@ -15,21 +15,28 @@ def chunk_text(
     if overlap < 0 or overlap >= chunk_size:
         raise ValueError("overlap must be >= 0 and smaller than chunk_size")
 
-    text = re.sub(r"\s+", " ", text).strip()
+    all_chunks = []
 
-    if not text:
-        return []
+    for page in pages:
+        text = re.sub(r"\s+", " ", page["text"]).strip()
 
-    chunks = []
-    start = 0
+        if not text:
+            continue
 
-    while start < len(text):
-        end = min(start + chunk_size, len(text))
-        chunks.append(text[start:end])
+        start = 0
 
-        if end == len(text):
-            break
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
 
-        start = end - overlap
+            all_chunks.append({
+                "text": text[start:end],
+                "page": page["page"],
+                "source": page["source"],
+            })
 
-    return chunks
+            if end == len(text):
+                break
+
+            start = end - overlap
+
+    return all_chunks
