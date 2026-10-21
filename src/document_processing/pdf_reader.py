@@ -3,8 +3,8 @@ from pathlib import Path
 from pypdf import PdfReader
 
 
-def extract_text_from_pdf(file_path: str) -> str:
-    """Extract text from a PDF file."""
+def extract_pages_from_pdf(file_path: str) -> list[dict]:
+    """Extract text from a PDF while preserving page numbers."""
 
     path = Path(file_path)
 
@@ -17,9 +17,22 @@ def extract_text_from_pdf(file_path: str) -> str:
     for page_number, page in enumerate(reader.pages, start=1):
         page_text = page.extract_text()
 
-        if page_text:
-            extracted_pages.append(
-                f"[Page {page_number}]\n{page_text}"
-            )
+        if page_text and page_text.strip():
+            extracted_pages.append({
+                "page": page_number,
+                "text": page_text.strip(),
+                "source": path.name,
+            })
 
-    return "\n\n".join(extracted_pages)
+    return extracted_pages
+
+
+def extract_text_from_pdf(file_path: str) -> str:
+    """Extract PDF text as a single string for compatibility."""
+
+    pages = extract_pages_from_pdf(file_path)
+
+    return "\n\n".join(
+        f"[Page {page['page']}]\n{page['text']}"
+        for page in pages
+    )
