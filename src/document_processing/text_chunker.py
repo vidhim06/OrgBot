@@ -4,7 +4,7 @@ import re
 
 def chunk_pages(
     pages: list[dict],
-    chunk_size: int = 500,
+    chunk_size: int = 300,
     overlap: int = 50,
 ) -> list[dict]:
     """Split PDF pages into chunks while preserving source metadata."""

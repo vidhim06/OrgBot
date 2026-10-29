@@ -76,3 +76,14 @@ class VectorStore:
             })
 
         return matches
+
+    def reset(self) -> None:
+        """Delete and recreate the collection for a fresh indexing run."""
+
+        collection_name = self.collection.name
+        self.client.delete_collection(collection_name)
+
+        self.collection = self.client.create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
