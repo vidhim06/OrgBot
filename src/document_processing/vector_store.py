@@ -1,7 +1,7 @@
 
 import chromadb
 
-
+from uuid import uuid4
 class VectorStore:
     """Store and search document chunks using ChromaDB."""
 
@@ -30,9 +30,11 @@ class VectorStore:
         if not chunks:
             return
 
+        upload_id = uuid4().hex
+
         ids = [
-            f"{chunk['source']}-page{chunk['page']}-chunk{i}"
-            for i, chunk in enumerate(chunks)
+            f"{upload_id}-chunk{i}"
+            for i in range(len(chunks))
         ]
 
         self.collection.upsert(

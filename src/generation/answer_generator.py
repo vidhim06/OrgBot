@@ -63,7 +63,7 @@ Answer:
 
     try:
         response = client.interactions.create(
-           model="gemini-3.5-flash-lite",
+            model="gemini-3.5-flash-lite",
             input=prompt
         )
 
@@ -73,6 +73,8 @@ Answer:
         }
 
     except Exception as error:
+        print("GEMINI ERROR:", repr(error))
+
         return {
             "answer": "Sorry, I could not generate an answer right now.",
             "sources": sources,
