@@ -11,7 +11,9 @@ from src.document_processing.embedding_model import generate_embeddings
 from src.document_processing.vector_store import VectorStore
 from src.generation.qa_pipeline import answer_question
 import time
+from src.auth.routes import router as auth_router
 app = FastAPI(title="OrgBot API")
+app.include_router(auth_router)
 
 UPLOAD_DIR = Path("data/uploads")
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
