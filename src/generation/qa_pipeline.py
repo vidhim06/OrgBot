@@ -4,8 +4,8 @@ from src.document_processing.vector_store import VectorStore
 from src.generation.answer_generator import generate_answer
 
 
-def answer_question(question: str) -> dict:
-    """Retrieve relevant document chunks and return an answer with sources."""
+def answer_question(question: str, organisation_id: int) -> dict:
+    """Retrieve relevant chunks from the logged-in organisation."""
 
     if not question.strip():
         return {
@@ -13,12 +13,16 @@ def answer_question(question: str) -> dict:
             "sources": [],
         }
 
-    # Convert the user's question into an embedding.
+    # Convert question into an embedding
     query_embedding = generate_embeddings([question])[0]
 
-    # Search the existing ChromaDB collection.
+    # Search only this organisation's documents
     store = VectorStore()
-    retrieved_chunks = store.search(query_embedding, n_results=3)
+    retrieved_chunks = store.search(
+        query_embedding,
+        organisation_id=organisation_id,
+        n_results=3
+    )
 
-    # Return the answer and its source information.
+    # Generate answer with sources
     return generate_answer(question, retrieved_chunks)

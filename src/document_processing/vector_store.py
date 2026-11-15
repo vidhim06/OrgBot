@@ -1,11 +1,12 @@
 
 import chromadb
-
 from uuid import uuid4
-class VectorStore:
-    """Store and search document chunks using ChromaDB."""
 
-    def __init__(self, collection_name: str = "orgbot_documents"):
+
+class VectorStore:
+    """Store and search document chunks separately by organisation."""
+
+    def __init__(self, collection_name: str = "orgbot_saas_documents"):
         self.client = chromadb.PersistentClient(
             path="data/chroma_db"
         )
@@ -19,8 +20,9 @@ class VectorStore:
         self,
         chunks: list[dict],
         embeddings: list[list[float]],
+        organisation_id: int,
     ) -> None:
-        """Save chunks, embeddings, and their source metadata."""
+        """Save document chunks with organisation-specific metadata."""
 
         if len(chunks) != len(embeddings):
             raise ValueError(
@@ -33,7 +35,7 @@ class VectorStore:
         upload_id = uuid4().hex
 
         ids = [
-            f"{upload_id}-chunk{i}"
+            f"{organisation_id}-{upload_id}-chunk{i}"
             for i in range(len(chunks))
         ]
 
@@ -45,6 +47,7 @@ class VectorStore:
                 {
                     "source": chunk["source"],
                     "page": chunk["page"],
+                    "organisation_id": organisation_id,
                 }
                 for chunk in chunks
             ],
@@ -53,9 +56,10 @@ class VectorStore:
     def search(
         self,
         query_embedding: list[float],
+        organisation_id: int,
         n_results: int = 3,
     ) -> list[dict]:
-        """Find the most relevant chunks for a query."""
+        """Search only documents belonging to the given organisation."""
 
         total = self.collection.count()
 
@@ -65,27 +69,19 @@ class VectorStore:
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=min(n_results, total),
+            where={"organisation_id": organisation_id},
         )
 
         matches = []
 
         for i, text in enumerate(results["documents"][0]):
+            metadata = results["metadatas"][0][i]
+
             matches.append({
                 "text": text,
-                "source": results["metadatas"][0][i]["source"],
-                "page": results["metadatas"][0][i]["page"],
+                "source": metadata["source"],
+                "page": metadata["page"],
                 "distance": results["distances"][0][i],
             })
 
         return matches
-
-    def reset(self) -> None:
-        """Delete and recreate the collection for a fresh indexing run."""
-
-        collection_name = self.collection.name
-        self.client.delete_collection(collection_name)
-
-        self.collection = self.client.create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )

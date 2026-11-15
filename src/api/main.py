@@ -1,10 +1,20 @@
 
 from pathlib import Path
 from uuid import uuid4
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    HTTPException,
+    Depends
+)
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
-
+from src.auth.dependencies import get_current_user
+from src.database.models import User, Document
+from sqlalchemy.orm import Session
+from src.database.database import get_db
 from src.document_processing.pdf_reader import extract_pages_from_pdf
 from src.document_processing.text_chunker import chunk_pages
 from src.document_processing.embedding_model import generate_embeddings
@@ -13,6 +23,18 @@ from src.generation.qa_pipeline import answer_question
 import time
 from src.auth.routes import router as auth_router
 app = FastAPI(title="OrgBot API")
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(auth_router)
 
 UPLOAD_DIR = Path("data/uploads")
@@ -33,14 +55,66 @@ def health():
     return {"status": "healthy"}
 
 
+
 @app.post("/ask")
-def ask_question(request: QuestionRequest):
-    return answer_question(request.question)
+async def ask_question(
+    request: QuestionRequest,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        result = answer_question(
+            request.question,
+            organisation_id=current_user.organisation_id
+        )
+        return result
+
+    except Exception as error:
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Question processing failed: {str(error)}"
+        )
+
+
+@app.get("/documents")
+async def get_documents(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    documents = (
+        db.query(Document)
+        .filter(
+            Document.organisation_id == current_user.organisation_id
+        )
+        .order_by(Document.created_at.desc())
+        .all()
+    )
+
+    return {
+        "documents": [
+            {
+                "id": document.id,
+                "filename": document.filename,
+                "pages_processed": document.pages_processed,
+                "chunks_created": document.chunks_created,
+                "status": document.status,
+                "created_at": document.created_at.isoformat()
+                if document.created_at else None
+            }
+            for document in documents
+        ]
+    }
 
 
 
 @app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     total_start = time.perf_counter()
     stored_path = None
 
@@ -51,10 +125,7 @@ async def upload_pdf(file: UploadFile = File(...)):
                 detail="Only PDF files are allowed."
             )
 
-        # 1. Read PDF
-        start = time.perf_counter()
         content = await file.read()
-        print(f"1. File reading: {time.perf_counter() - start:.2f}s")
 
         if len(content) > MAX_FILE_SIZE:
             raise HTTPException(
@@ -68,20 +139,18 @@ async def upload_pdf(file: UploadFile = File(...)):
                 detail="Invalid PDF file."
             )
 
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
         original_filename = Path(file.filename).name
-        stored_path = UPLOAD_DIR / f"{uuid4().hex}.pdf"
+        organisation_id = current_user.organisation_id
 
-        # 2. Save PDF
-        start = time.perf_counter()
+        # Create a separate upload folder for each organisation
+        organisation_upload_dir = UPLOAD_DIR / str(organisation_id)
+        organisation_upload_dir.mkdir(parents=True, exist_ok=True)
+
+        stored_path = organisation_upload_dir / f"{uuid4().hex}.pdf"
         stored_path.write_bytes(content)
-        print(f"2. Saving PDF: {time.perf_counter() - start:.2f}s")
 
-        # 3. Extract text
-        start = time.perf_counter()
+        # Extract PDF text
         pages = extract_pages_from_pdf(str(stored_path))
-        print(f"3. PDF extraction: {time.perf_counter() - start:.2f}s")
 
         if not pages:
             raise HTTPException(
@@ -92,10 +161,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         for page in pages:
             page["source"] = original_filename
 
-        # 4. Create chunks
-        start = time.perf_counter()
+        # Create chunks
         chunks = chunk_pages(pages)
-        print(f"4. Chunking: {time.perf_counter() - start:.2f}s")
 
         if not chunks:
             raise HTTPException(
@@ -103,26 +170,45 @@ async def upload_pdf(file: UploadFile = File(...)):
                 detail="No text chunks could be created."
             )
 
-        # 5. Generate embeddings
-        start = time.perf_counter()
+        # Generate embeddings
         embeddings = generate_embeddings(
             [chunk["text"] for chunk in chunks]
         )
-        print(f"5. Embedding generation: {time.perf_counter() - start:.2f}s")
 
-        # 6. Store in ChromaDB
-        start = time.perf_counter()
+        # Store chunks for this organisation
         store = VectorStore()
-        store.add_chunks(chunks, embeddings)
-        print(f"6. ChromaDB storage: {time.perf_counter() - start:.2f}s")
+        store.add_chunks(
+            chunks,
+            embeddings,
+            organisation_id=organisation_id
+        )
 
-        print(f"TOTAL UPLOAD TIME: {time.perf_counter() - total_start:.2f}s")
+        # Save document details in MySQL
+        document = Document(
+            filename=original_filename,
+            file_path=str(stored_path),
+            pages_processed=len(pages),
+            chunks_created=len(chunks),
+            status="Processed",
+            organisation_id=organisation_id
+        )
+
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+
+        print(
+            f"TOTAL UPLOAD TIME: "
+            f"{time.perf_counter() - total_start:.2f}s"
+        )
 
         return {
             "message": "PDF uploaded and processed successfully!",
+            "document_id": document.id,
             "filename": original_filename,
             "pages_processed": len(pages),
-            "chunks_created": len(chunks)
+            "chunks_created": len(chunks),
+            "organisation_id": organisation_id
         }
 
     except HTTPException:
@@ -131,8 +217,11 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise
 
     except Exception as error:
+        db.rollback()
+
         if stored_path:
             stored_path.unlink(missing_ok=True)
+
         raise HTTPException(
             status_code=500,
             detail=f"PDF processing failed: {str(error)}"
@@ -140,5 +229,3 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     finally:
         await file.close()
-
-    
